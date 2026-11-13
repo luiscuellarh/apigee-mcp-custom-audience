@@ -29,19 +29,49 @@ sequenceDiagram
 
 ---
 
+## Included MCP Banking Tools (9 Tools) & Mock Data
+
+The MCP Server (`main.py`) uses in-memory mock data so you can test every tool immediately without an external database.
+
+### 1. Available MCP Tools
+
+| Tool Name | Arguments | Description |
+| :--- | :--- | :--- |
+| `get_customer_profile` | `customer_id` | Returns customer profile, banking segment, credit score, KYC status, and linked accounts. |
+| `list_accounts` | `customer_id=""` *(optional)* | Lists all bank accounts (or filters by customer ID). |
+| `get_account_balance` | `account_id` | Returns available balance, IBAN, account type, and status for a specific account. |
+| `list_transactions` | `account_id`, `limit=5`, `category=""` | Lists recent debit/credit transactions, optionally filtered by category (`Dining`, `Utilities`, `Payroll`, `Shopping`, `Transfer`). |
+| `transfer_funds` | `source_account`, `destination_account`, `amount`, `description` | Transfers funds between two accounts in real time and records both ledger entries. |
+| `list_cards` | `customer_id=""` *(optional)* | Lists debit and credit cards with masked card numbers, limits, balances, and status (`ACTIVE` / `FROZEN`). |
+| `toggle_card_lock` | `card_id`, `action="FREEZE"` | Immediately freezes (`FREEZE`) or unfreezes (`UNFREEZE`) a debit or credit card. |
+| `pay_utility_bill` | `account_id`, `biller_id`, `amount`, `invoice_ref` | Pays a registered utility/service biller from a bank account. |
+| `simulate_loan` | `loan_type`, `principal_amount`, `term_months` | Calculates monthly payment, APR, and total interest for a `PERSONAL`, `AUTO`, or `MORTGAGE` loan. |
+
+### 2. Pre-Loaded Mock IDs for Testing
+
+| Entity | Sample IDs | Details |
+| :--- | :--- | :--- |
+| **Customers** | `CUST-101`, `CUST-102`, `CUST-103` | Alice Johnson (*Premier*), Carlos Ruiz (*Personal*), Emma Smith (*Business - Acme Corp*) |
+| **Bank Accounts** | `ACC-001`, `ACC-002`, `ACC-003`, `ACC-004` | `ACC-001` (\$15,400.50 Checking), `ACC-002` (\$48,000 Savings), `ACC-003` (\$3,200 Checking), `ACC-004` (\$125,000 Business) |
+| **Cards** | `CARD-4501`, `CARD-8820`, `CARD-9912` | Visa Infinite Credit (`ACTIVE`), Visa Debit (`ACTIVE`), Mastercard Gold (`FROZEN`) |
+| **Billers** | `BILL-ELECTRIC`, `BILL-INTERNET`, `BILL-WATER`, `BILL-CLOUD` | City Power & Light, FiberNet Gigabit ISP, Metro Water Authority, Google Cloud Platform |
+| **Loan Types** | `PERSONAL`, `AUTO`, `MORTGAGE` | 8.9% APR (Personal), 5.4% APR (Auto), 6.2% APR (Mortgage) |
+
+---
+
 ## Repository Structure
 
 | File | Description |
 | :--- | :--- |
 | `env.sh` | Central configuration script. Auto-detects active `PROJECT_ID`, Apigee environment (`APIGEE_ENV`), and Apigee Environment Group hostname (`APIGEE_HOST`). |
-| `main.py` | Stateless **Streamable HTTP** MCP Server built with Python `FastMCP`, exposing 3 mock banking tools: `get_account_balance`, `list_transactions`, and `transfer_funds`. |
+| `main.py` | Stateless **Streamable HTTP** MCP Server built with Python `FastMCP`, exposing 9 banking tools with rich in-memory mock data. |
 | `requirements.txt` | Pinned Python dependencies (`mcp==1.9.4`, `pydantic==2.10.6`, `uvicorn==0.34.0`, `starlette==0.45.3`). |
 | `Dockerfile` | Lightweight `python:3.11-slim` container listening on port `8080`. |
 | `mcp-simplebank.template.yaml` | **Apigee Feature Templater (`aft`)** proxy definition including the `PP-ParsePayload` policy (`JSON-RPC-2.0` / `MCP`), streaming properties, and `<GoogleIDToken><Audience>__CUSTOM_AUDIENCE__</Audience></GoogleIDToken>`. |
 | `mcp-simplebank-product.yaml` | **Apigee Feature Templater (`aft`)** API Product definition with MCP `payloadOperations` (`tools/list`, `tools/call`). |
 | `01-deploy-cloudrun.sh` | **Stage 1 Script:** Enables Cloud Run/Build/IAM APIs from scratch, configures IAM for both Standard GCP & Argolis, deploys the private Cloud Run service, registers the custom audience (`simplebank`), and binds the Apigee invoker Service Account. |
 | `02-deploy-apigee.sh` | **Stage 2 Script:** Queries the deployed Cloud Run URL dynamically, renders `mcp-simplebank.yaml`, downloads `aft` automatically if not installed, and deploys the Proxy + MCP Product to Apigee X. |
-| `03-test-mcp.sh` | **Stage 3 Script:** Runs end-to-end JSON-RPC 2.0 `tools/list` and `tools/call` (`get_account_balance`) requests through the Apigee X endpoint. |
+| `03-test-mcp.sh` | **Stage 3 Script:** Runs end-to-end JSON-RPC 2.0 `tools/list` and `tools/call` (`get_customer_profile`, `list_cards`, `simulate_loan`) requests through the Apigee X endpoint. |
 
 ---
 
@@ -58,8 +88,8 @@ sequenceDiagram
 ### Step 0: Clone the Repository & Review `env.sh`
 
 ```bash
-git clone https://github.com/<YOUR_GITHUB_USER>/apigee-cloudrun-mcp-custom-audience.git
-cd apigee-cloudrun-mcp-custom-audience
+git clone https://github.com/luiscuellarh/apigee-mcp-custom-audience.git
+cd apigee-mcp-custom-audience
 chmod +x *.sh
 ```
 
@@ -117,55 +147,6 @@ Run `./03-test-mcp.sh`:
 ```bash
 ./03-test-mcp.sh
 ```
-
-**Expected Output:**
-1. **`tools/list` Response:**
-   ```json
-   {
-     "jsonrpc": "2.0",
-     "id": 1,
-     "result": {
-       "tools": [
-         {
-           "name": "get_account_balance",
-           "description": "Retrieve the available balance for a bank account (e.g., ACC-001, ACC-002).",
-           "inputSchema": {
-             "properties": { "account_id": { "title": "Account Id", "type": "string" } },
-             "required": ["account_id"],
-             "title": "get_account_balanceArguments",
-             "type": "object"
-           }
-         },
-         {
-           "name": "list_transactions",
-           "description": "List the most recent transactions for a bank account.",
-           "inputSchema": { ... }
-         },
-         {
-           "name": "transfer_funds",
-           "description": "Transfer funds between two bank accounts.",
-           "inputSchema": { ... }
-         }
-       ]
-     }
-   }
-   ```
-2. **`tools/call` (`get_account_balance` for `ACC-001`) Response:**
-   ```json
-   {
-     "jsonrpc": "2.0",
-     "id": 2,
-     "result": {
-       "content": [
-         {
-           "type": "text",
-           "text": "{\n  \"account_id\": \"ACC-001\",\n  \"holder\": \"Alice Johnson\",\n  \"balance\": 15400.5,\n  \"currency\": \"USD\"\n}"
-         }
-       ],
-       "isError": false
-     }
-   }
-   ```
 
 ---
 

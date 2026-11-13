@@ -1,0 +1,10 @@
+# Generated proxy file and local AFT binary
+mcp-simplebank.yaml
+aft
+*.zip
+
+# Python & OS
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store

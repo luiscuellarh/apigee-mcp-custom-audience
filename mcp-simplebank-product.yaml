@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/apigee/apigee-templater/main/schema/gateway.schema.1.0.json
+gateway: apigee
+schemaVersion: 1.0.0
+name: mcp-simplebank-product
+displayName: MCP SimpleBank Product
+type: product
+description: MCP API Product governing banking tool operations
+approvalType: auto
+access: private
+environments:
+  - dev
+proxies:
+  - mcp-simplebank-v1
+operations:
+  - name: /
+    apiSource: mcp-simplebank-v1
+    methods:
+      - POST
+      - GET
+      - DELETE
+payloadOperations:
+  - name: tools/list
+    apiSource: mcp-simplebank-v1
+    protocol: MCP
+  - name: tools/call
+    apiSource: mcp-simplebank-v1
+    protocol: MCP

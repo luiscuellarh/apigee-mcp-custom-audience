@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/apigee/apigee-templater/main/schema/gateway.schema.1.0.json
+name: mcp-simplebank-v1
+displayName: MCP SimpleBank v1
+type: proxy
+gateway: apigee
+schemaVersion: 1.0.0
+description: MCP Proxy (Streamable HTTP) for Cloud Run banking tools using a Custom Audience and ParsePayload policy
+
+endpoints:
+  - name: default
+    basePath: /v1/mcp/simplebank
+    routes:
+      - name: default
+        target: default
+    flows:
+      - name: PreFlow
+        mode: Request
+        steps:
+          - name: PP-ParsePayload
+
+targets:
+  - name: default
+    url: __CLOUD_RUN_URL__/mcp/
+    httpTargetConnection:
+      Properties:
+        Property:
+          - metadata:
+              name: response.streaming.enabled
+            _text: "true"
+          - metadata:
+              name: request.streaming.enabled
+            _text: "true"
+      SSLInfo:
+        Enabled: "true"
+      Authentication:
+        GoogleIDToken:
+          Audience: __CUSTOM_AUDIENCE__
+      URL: __CLOUD_RUN_URL__/mcp/
+    flows: []
+
+policies:
+  - name: PP-ParsePayload
+    type: ParsePayload
+    content:
+      ParsePayload:
+        metadata:
+          async: "false"
+          continueOnError: "false"
+          enabled: "true"
+          name: PP-ParsePayload
+        DisplayName: PP-ParsePayload
+        Source: request
+        PayloadType: JSON-RPC-2.0
+        Protocol: MCP

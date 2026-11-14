@@ -1,0 +1,9 @@
+.git
+.gitignore
+*.sh
+*.yaml
+*.md
+*.zip
+aft
+__pycache__
+.venv

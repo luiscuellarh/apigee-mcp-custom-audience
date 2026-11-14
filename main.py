@@ -1,5 +1,6 @@
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from mcp.server.fastmcp import FastMCP
 
 # Initialize stateless Streamable HTTP MCP Server for Cloud Run
@@ -208,74 +209,99 @@ LOAN_PRODUCTS = {
     "MORTGAGE": {"name": "Fixed-Rate Home Mortgage", "annual_rate_pct": 6.2, "min_months": 60, "max_months": 360},
 }
 
+# Precomputed O(1) secondary indexes by customer_id
+CUSTOMER_ACCOUNTS: dict[str, list[str]] = {}
+for _acc_id, _acc in ACCOUNTS.items():
+    CUSTOMER_ACCOUNTS.setdefault(_acc["customer_id"], []).append(_acc_id)
+
+CUSTOMER_CARDS: dict[str, list[str]] = {}
+for _card_id, _card in CARDS.items():
+    CUSTOMER_CARDS.setdefault(_card["customer_id"], []).append(_card_id)
+
+
+def _utc_now_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
 
 # ==============================================================================
-# MCP Banking Tools
+# Async MCP Banking Tools (Zero Thread-Pool Overhead on Uvicorn Event Loop)
 # ==============================================================================
 
 
 @mcp.tool()
-def get_customer_profile(customer_id: str) -> dict:
+async def get_customer_profile(customer_id: str) -> dict:
     """Retrieve a customer's profile, banking tier, KYC status, and linked accounts (e.g., CUST-101, CUST-102, CUST-103)."""
-    customer = CUSTOMERS.get(customer_id.upper())
+    cid = customer_id.strip().upper()
+    customer = CUSTOMERS.get(cid)
     if not customer:
         return {"error": f"Customer '{customer_id}' not found. Valid IDs: {', '.join(CUSTOMERS.keys())}"}
     linked_accounts = [
-        {"account_id": acc_id, "type": acc["type"], "balance": acc["balance"], "currency": acc["currency"]}
-        for acc_id, acc in ACCOUNTS.items()
-        if acc["customer_id"] == customer_id.upper()
+        {
+            "account_id": acc_id,
+            "type": ACCOUNTS[acc_id]["type"],
+            "balance": ACCOUNTS[acc_id]["balance"],
+            "currency": ACCOUNTS[acc_id]["currency"],
+        }
+        for acc_id in CUSTOMER_ACCOUNTS.get(cid, [])
     ]
-    return {"customer_id": customer_id.upper(), **customer, "accounts": linked_accounts}
+    return {"customer_id": cid, **customer, "accounts": linked_accounts}
 
 
 @mcp.tool()
-def list_accounts(customer_id: str = "") -> dict:
+async def list_accounts(customer_id: str = "") -> dict:
     """List all bank accounts, optionally filtered by customer_id (e.g., CUST-101)."""
-    results = []
-    for acc_id, acc in ACCOUNTS.items():
-        if not customer_id or acc["customer_id"] == customer_id.upper():
-            results.append({"account_id": acc_id, **acc})
+    cid = customer_id.strip().upper()
+    if cid:
+        acc_ids = CUSTOMER_ACCOUNTS.get(cid, [])
+        results = [{"account_id": acc_id, **ACCOUNTS[acc_id]} for acc_id in acc_ids]
+    else:
+        results = [{"account_id": acc_id, **acc} for acc_id, acc in ACCOUNTS.items()]
     return {"total_accounts": len(results), "accounts": results}
 
 
 @mcp.tool()
-def get_account_balance(account_id: str) -> dict:
+async def get_account_balance(account_id: str) -> dict:
     """Retrieve the available balance and details for a specific bank account (e.g., ACC-001, ACC-002, ACC-003, ACC-004)."""
-    account = ACCOUNTS.get(account_id.upper())
+    acc_key = account_id.strip().upper()
+    account = ACCOUNTS.get(acc_key)
     if not account:
         return {"error": f"Account '{account_id}' not found. Valid IDs: {', '.join(ACCOUNTS.keys())}"}
-    return {"account_id": account_id.upper(), **account}
+    return {"account_id": acc_key, **account}
 
 
 @mcp.tool()
-def list_transactions(account_id: str, limit: int = 5, category: str = "") -> dict:
+async def list_transactions(account_id: str, limit: int = 5, category: str = "") -> dict:
     """List recent transactions for a bank account (ACC-001..ACC-004), optionally filtered by category (e.g., Dining, Utilities, Payroll)."""
-    acc_key = account_id.upper()
+    acc_key = account_id.strip().upper()
     if acc_key not in ACCOUNTS:
         return {"error": f"Account '{account_id}' not found. Valid IDs: {', '.join(ACCOUNTS.keys())}"}
+    safe_limit = max(1, min(limit, 100))
     tx_list = TRANSACTIONS.get(acc_key, [])
-    if category:
-        tx_list = [tx for tx in tx_list if tx.get("category", "").lower() == category.lower()]
+    cat_filter = category.strip().lower()
+    if cat_filter:
+        tx_list = [tx for tx in tx_list if tx.get("category", "").lower() == cat_filter]
     return {
         "account_id": acc_key,
         "holder": ACCOUNTS[acc_key]["holder"],
         "current_balance": ACCOUNTS[acc_key]["balance"],
-        "transactions": tx_list[:limit],
+        "transactions": tx_list[:safe_limit],
     }
 
 
 @mcp.tool()
-def transfer_funds(
+async def transfer_funds(
     source_account: str,
     destination_account: str,
     amount: float,
     description: str = "Internal bank transfer",
 ) -> dict:
     """Transfer money between two bank accounts (e.g., from ACC-001 to ACC-003)."""
-    src = source_account.upper()
-    dst = destination_account.upper()
+    src = source_account.strip().upper()
+    dst = destination_account.strip().upper()
     if src not in ACCOUNTS or dst not in ACCOUNTS:
         return {"error": f"Invalid source or destination account. Valid IDs: {', '.join(ACCOUNTS.keys())}"}
+    if src == dst:
+        return {"error": "Source and destination accounts must be different."}
     if amount <= 0:
         return {"error": "Transfer amount must be greater than zero."}
     if ACCOUNTS[src]["balance"] < amount:
@@ -284,8 +310,8 @@ def transfer_funds(
     ACCOUNTS[src]["balance"] = round(ACCOUNTS[src]["balance"] - amount, 2)
     ACCOUNTS[dst]["balance"] = round(ACCOUNTS[dst]["balance"] + amount, 2)
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    tx_id = f"TX-{int(datetime.utcnow().timestamp()) % 100000}"
+    timestamp = _utc_now_str()
+    tx_id = f"TX-{uuid.uuid4().hex[:8].upper()}"
     TRANSACTIONS.setdefault(src, []).insert(
         0,
         {
@@ -326,20 +352,22 @@ def transfer_funds(
 
 
 @mcp.tool()
-def list_cards(customer_id: str = "") -> dict:
+async def list_cards(customer_id: str = "") -> dict:
     """List debit and credit cards, optionally filtered by customer_id (e.g., CUST-101, CUST-102)."""
-    cards = []
-    for card_id, card in CARDS.items():
-        if not customer_id or card["customer_id"] == customer_id.upper():
-            cards.append({"card_id": card_id, **card})
+    cid = customer_id.strip().upper()
+    if cid:
+        card_ids = CUSTOMER_CARDS.get(cid, [])
+        cards = [{"card_id": card_id, **CARDS[card_id]} for card_id in card_ids]
+    else:
+        cards = [{"card_id": card_id, **card} for card_id, card in CARDS.items()]
     return {"total_cards": len(cards), "cards": cards}
 
 
 @mcp.tool()
-def toggle_card_lock(card_id: str, action: str = "FREEZE") -> dict:
+async def toggle_card_lock(card_id: str, action: str = "FREEZE") -> dict:
     """Freeze or unfreeze a credit/debit card (card_id: CARD-4501, CARD-8820, CARD-9912; action: FREEZE or UNFREEZE)."""
-    cid = card_id.upper()
-    act = action.upper()
+    cid = card_id.strip().upper()
+    act = action.strip().upper()
     if cid not in CARDS:
         return {"error": f"Card '{card_id}' not found. Valid IDs: {', '.join(CARDS.keys())}"}
     if act not in ("FREEZE", "UNFREEZE"):
@@ -353,15 +381,15 @@ def toggle_card_lock(card_id: str, action: str = "FREEZE") -> dict:
         "holder": CARDS[cid]["holder"],
         "previous_action": act,
         "new_status": new_status,
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": _utc_now_str(),
     }
 
 
 @mcp.tool()
-def pay_utility_bill(account_id: str, biller_id: str, amount: float, invoice_ref: str = "INV-2026") -> dict:
+async def pay_utility_bill(account_id: str, biller_id: str, amount: float, invoice_ref: str = "INV-2026") -> dict:
     """Pay a registered utility or service biller (biller_id: BILL-ELECTRIC, BILL-INTERNET, BILL-WATER, BILL-CLOUD) from a bank account."""
-    acc = account_id.upper()
-    bil = biller_id.upper()
+    acc = account_id.strip().upper()
+    bil = biller_id.strip().upper()
     if acc not in ACCOUNTS:
         return {"error": f"Account '{account_id}' not found. Valid IDs: {', '.join(ACCOUNTS.keys())}"}
     if bil not in BILLERS:
@@ -373,8 +401,8 @@ def pay_utility_bill(account_id: str, biller_id: str, amount: float, invoice_ref
 
     ACCOUNTS[acc]["balance"] = round(ACCOUNTS[acc]["balance"] - amount, 2)
     biller = BILLERS[bil]
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    payment_id = f"PAY-{int(datetime.utcnow().timestamp()) % 100000}"
+    timestamp = _utc_now_str()
+    payment_id = f"PAY-{uuid.uuid4().hex[:8].upper()}"
 
     TRANSACTIONS.setdefault(acc, []).insert(
         0,
@@ -403,14 +431,18 @@ def pay_utility_bill(account_id: str, biller_id: str, amount: float, invoice_ref
 
 
 @mcp.tool()
-def simulate_loan(loan_type: str = "PERSONAL", principal_amount: float = 10000.0, term_months: int = 24) -> dict:
+async def simulate_loan(loan_type: str = "PERSONAL", principal_amount: float = 10000.0, term_months: int = 24) -> dict:
     """Simulate monthly payments and total interest for a loan (loan_type: PERSONAL, AUTO, MORTGAGE)."""
-    ltype = loan_type.upper()
+    ltype = loan_type.strip().upper()
     if ltype not in LOAN_PRODUCTS:
         return {"error": f"Unknown loan_type '{loan_type}'. Valid types: {', '.join(LOAN_PRODUCTS.keys())}"}
     product = LOAN_PRODUCTS[ltype]
-    if principal_amount <= 0 or term_months <= 0:
-        return {"error": "principal_amount and term_months must be greater than zero."}
+    if principal_amount <= 0:
+        return {"error": "principal_amount must be greater than zero."}
+    if not (product["min_months"] <= term_months <= product["max_months"]):
+        return {
+            "error": f"term_months for {ltype} must be between {product['min_months']} and {product['max_months']} months."
+        }
 
     monthly_rate = (product["annual_rate_pct"] / 100.0) / 12.0
     monthly_payment = principal_amount * (monthly_rate * (1 + monthly_rate) ** term_months) / (

@@ -17,6 +17,7 @@ endpoints:
         mode: Request
         steps:
           - name: PP-ParsePayload
+            condition: request.verb == "POST"
 
 targets:
   - name: default
@@ -30,6 +31,12 @@ targets:
           - metadata:
               name: request.streaming.enabled
             _text: "true"
+          - metadata:
+              name: keepalive.timeout.millis
+            _text: "60000"
+          - metadata:
+              name: connect.timeout.millis
+            _text: "5000"
       SSLInfo:
         Enabled: "true"
       Authentication:

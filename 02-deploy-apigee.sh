@@ -23,10 +23,13 @@ echo "   -> Apigee Hostname: ${APIGEE_HOST}"
 echo "   -> Cloud Run URL:   ${CLOUD_RUN_URL}"
 echo "   -> Custom Audience: ${CUSTOM_AUDIENCE}"
 
-echo "📝 [2/3] Generating mcp-simplebank.yaml with Target URL and Custom Audience..."
+echo "📝 [2/3] Generating Proxy and Product YAML manifests..."
 sed -e "s|__CLOUD_RUN_URL__|${CLOUD_RUN_URL}|g" \
     -e "s|__CUSTOM_AUDIENCE__|${CUSTOM_AUDIENCE}|g" \
     mcp-simplebank.template.yaml > mcp-simplebank.yaml
+
+sed -e "s|__APIGEE_ENV__|${APIGEE_ENV}|g" \
+    mcp-simplebank-product.yaml > mcp-simplebank-product.rendered.yaml
 
 echo "📦 [3/3] Deploying Proxy and MCP API Product to Apigee X using 'aft'..."
 if ! command -v aft >/dev/null 2>&1 && [[ ! -x ./aft ]]; then
@@ -43,7 +46,8 @@ AFT_BIN=$(command -v aft 2>/dev/null || echo "./aft")
 TOKEN=$(gcloud auth print-access-token)
 
 "${AFT_BIN}" -i mcp-simplebank.yaml -o "${APIGEE_ORG}:${PROXY_NAME}:${APIGEE_ENV}:${SA_EMAIL}" -t "${TOKEN}" --no-anim
-"${AFT_BIN}" -i mcp-simplebank-product.yaml --organization "${APIGEE_ORG}" -t "${TOKEN}" --no-anim
+"${AFT_BIN}" -i mcp-simplebank-product.rendered.yaml -n mcp-simplebank-product --organization "${APIGEE_ORG}" -t "${TOKEN}" --no-anim
+rm -f mcp-simplebank-product.rendered.yaml
 
 echo ""
 echo "✅ Stage 2 completed successfully."

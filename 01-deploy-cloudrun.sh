@@ -6,10 +6,10 @@
 set -euo pipefail
 source ./env.sh
 
-echo "🔧 [0/4] Target Project: ${PROJECT_ID} (Region: ${REGION})"
+echo "🔧 [0/3] Target Project: ${PROJECT_ID} (Region: ${REGION})"
 gcloud config set project "${PROJECT_ID}"
 
-echo "🛠️ [1/4] Enabling required Google Cloud APIs (Zero-State Cloud Run Setup)..."
+echo "🛠️ [1/3] Enabling required Google Cloud APIs (Zero-State Cloud Run Setup)..."
 gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
@@ -40,21 +40,19 @@ for ROLE in roles/storage.admin roles/artifactregistry.writer roles/logging.logW
     --quiet >/dev/null 2>&1 || true
 done
 
-echo "🚀 [2/4] Deploying ${SERVICE_NAME} to Cloud Run (--no-allow-unauthenticated, ingress=${INGRESS_MODE})..."
+echo "🚀 [2/3] Deploying ${SERVICE_NAME} to Cloud Run with Custom Audience '${CUSTOM_AUDIENCE}'..."
 gcloud run deploy "${SERVICE_NAME}" \
   --source . \
   --region="${REGION}" \
   --no-allow-unauthenticated \
   --ingress="${INGRESS_MODE}" \
-  --quiet
-
-echo "🔒 [3/4] Registering Custom Audience '${CUSTOM_AUDIENCE}' on Cloud Run..."
-gcloud run services update "${SERVICE_NAME}" \
-  --region="${REGION}" \
   --add-custom-audiences="${CUSTOM_AUDIENCE}" \
+  --cpu-boost \
+  --concurrency=80 \
+  --memory=512Mi \
   --quiet
 
-echo "🔑 [4/4] Creating Apigee Invoker Service Account (${SA_EMAIL}) & Binding IAM Roles..."
+echo "🔑 [3/3] Creating Apigee Invoker Service Account (${SA_EMAIL}) & Binding Least-Privilege IAM..."
 if ! gcloud iam service-accounts describe "${SA_EMAIL}" >/dev/null 2>&1; then
   gcloud iam service-accounts create "${SA_NAME}" \
     --display-name="Apigee Cloud Run MCP Invoker"
@@ -70,11 +68,6 @@ gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
 APIGEE_AGENT="service-${PROJECT_NUMBER}@gcp-sa-apigee.iam.gserviceaccount.com"
 gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
   --member="serviceAccount:${APIGEE_AGENT}" \
-  --role="roles/iam.serviceAccountTokenCreator" \
-  --quiet >/dev/null 2>&1
-
-gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
-  --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/iam.serviceAccountTokenCreator" \
   --quiet >/dev/null 2>&1
 

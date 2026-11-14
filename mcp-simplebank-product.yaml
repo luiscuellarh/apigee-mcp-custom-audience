@@ -8,7 +8,7 @@ description: MCP API Product governing banking tool operations
 approvalType: auto
 access: private
 environments:
-  - dev
+  - __APIGEE_ENV__
 proxies:
   - mcp-simplebank-v1
 operations:

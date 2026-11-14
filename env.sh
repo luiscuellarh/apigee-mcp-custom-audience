@@ -36,8 +36,7 @@ if [[ -z "${APIGEE_HOST:-}" ]]; then
   if [[ -n "${TOKEN}" ]]; then
     export APIGEE_HOST=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
       "https://apigee.googleapis.com/v1/organizations/${APIGEE_ORG}/envgroups" \
-      | grep -o '"hostnames": *\[[^]]*\]' | head -n 1 \
-      | sed -E 's/.*"([^"]+)".*/\1/' || true)
+      | tr -d '\n ' | grep -o '"hostnames":\["[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
   fi
   export APIGEE_HOST="${APIGEE_HOST:-your-apigee-domain.nip.io}"
 fi

@@ -1,5 +1,6 @@
-# Generated proxy file and local AFT binary
+# Generated proxy/product files and local AFT binary
 mcp-simplebank.yaml
+mcp-simplebank-product.rendered.yaml
 aft
 *.zip
 
